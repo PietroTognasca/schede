@@ -1,0 +1,68 @@
+:root {
+  --font-title: 'Arial Narrow', 'Franklin Gothic Heavy', 'Impact', sans-serif;
+  --font-body: 'Trebuchet MS', 'Lucida Sans Unicode', 'Segoe UI', sans-serif;
+
+  --bg-main: #f6efe8;
+  --bg-accent: #ffd6a8;
+  --surface: rgba(255, 255, 255, 0.86);
+  --surface-border: rgba(20, 24, 27, 0.14);
+  --ink-strong: #192028;
+  --ink-soft: #4d5a62;
+  --brand-primary: #d6452f;
+  --brand-secondary: #126f5c;
+  --brand-dark: #0d5a4b;
+  --card-shadow: 0 18px 38px rgba(52, 34, 16, 0.12);
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  color: var(--ink-strong);
+  background:
+    radial-gradient(circle at 14% -10%, rgba(214, 69, 47, 0.27), transparent 46%),
+    radial-gradient(circle at 100% 0%, rgba(18, 111, 92, 0.23), transparent 50%),
+    linear-gradient(160deg, var(--bg-main), #f3e7da 42%, #efe4d8);
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.45;
+  background-image: linear-gradient(
+      rgba(25, 32, 40, 0.04) 1px,
+      transparent 1px
+    ),
+    linear-gradient(90deg, rgba(25, 32, 40, 0.04) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(circle at center, black 30%, transparent 90%);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin: 0;
+}
+
+button {
+  font-family: inherit;
+}
