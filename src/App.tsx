@@ -1,234 +1,922 @@
-import { type FormEvent, useEffect, useMemo, useState } from 'react'
+import { type SyntheticEvent, useEffect, useMemo, useState } from 'react'
 import './App.css'
 import {
-  type EquipmentTag,
-  type FriendProfile,
-  type GeneratedPlan,
-  type TrainingContext,
-  contextOptions,
-  equipmentOptions,
+  FALLBACK_EXERCISES,
+  fetchExerciseLibrary,
+  type ExerciseLibraryItem,
+} from './lib/exerciseLibrary'
+import {
+  countPlanExercises,
+  createEmptyDay,
+  createEmptyPlan,
+  createId,
+  decodePlansFromUrl,
+  encodePlansForUrl,
+  formatDateLabel,
   formatPlanForClipboard,
-  generateWorkoutPlan,
-  goalOptions,
-  levelOptions,
-} from './lib/planGenerator'
+  normalizePlans,
+  type FriendPlan,
+  type PlanExerciseEntry,
+} from './lib/manualPlan'
 
-const STORAGE_KEY = 'schede-workout-social-coach-v1'
+const TRAINER_STORAGE_KEY = 'schede-manuali-trainer-v2'
+const MAX_LIBRARY_RESULTS = 90
+const GENERIC_FALLBACK_IMAGE = FALLBACK_EXERCISES[0].imageUrl
 
-const defaultProfile: FriendProfile = {
-  friendName: '',
-  goal: 'ipertrofia',
-  level: 'principiante',
-  daysPerWeek: 3,
-  sessionMinutes: 60,
-  context: 'palestra',
-  equipment: ['bodyweight', 'dumbbells', 'bands'],
-  notes: '',
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value))
-}
-
-function loadSavedPlans(): GeneratedPlan[] {
+function loadTrainerPlans(): FriendPlan[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(TRAINER_STORAGE_KEY)
     if (!raw) {
       return []
     }
 
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) {
-      return []
-    }
-
-    return parsed as GeneratedPlan[]
+    return normalizePlans(JSON.parse(raw))
   } catch {
     return []
   }
 }
 
-function formatDateLabel(dateIso: string): string {
-  return new Intl.DateTimeFormat('it-IT', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(dateIso))
+function toLabel(value: string): string {
+  if (!value) {
+    return 'N/A'
+  }
+
+  return value
+    .replace(/[_-]/g, ' ')
+    .split(' ')
+    .filter((piece) => piece.length > 0)
+    .map((piece) => piece.charAt(0).toUpperCase() + piece.slice(1))
+    .join(' ')
 }
 
 function App() {
-  const [profile, setProfile] = useState<FriendProfile>(defaultProfile)
-  const [savedPlans, setSavedPlans] = useState<GeneratedPlan[]>(() =>
-    loadSavedPlans(),
+  const [viewMode, setViewMode] = useState<'public' | 'trainer'>('public')
+  const [trainerPlans, setTrainerPlans] = useState<FriendPlan[]>(() =>
+    loadTrainerPlans(),
   )
-  const [activePlanId, setActivePlanId] = useState<string | null>(null)
-  const [copyFeedback, setCopyFeedback] = useState('')
-
-  const activePlan = useMemo(
-    () => savedPlans.find((plan) => plan.id === activePlanId) ?? null,
-    [activePlanId, savedPlans],
+  const [selectedTrainerPlanId, setSelectedTrainerPlanId] = useState<string | null>(
+    null,
   )
+  const [selectedPublicPlanId, setSelectedPublicPlanId] = useState<string | null>(
+    null,
+  )
+  const [targetDayId, setTargetDayId] = useState<string | null>(null)
+  const [trainerFeedback, setTrainerFeedback] = useState('')
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(savedPlans))
-  }, [savedPlans])
+  const [exerciseLibrary, setExerciseLibrary] = useState<ExerciseLibraryItem[]>(
+    FALLBACK_EXERCISES,
+  )
+  const [libraryLoading, setLibraryLoading] = useState(true)
+  const [libraryError, setLibraryError] = useState('')
 
-  useEffect(() => {
-    if (!activePlanId && savedPlans.length > 0) {
-      setActivePlanId(savedPlans[0].id)
+  const [searchText, setSearchText] = useState('')
+  const [muscleFilter, setMuscleFilter] = useState('all')
+  const [equipmentFilter, setEquipmentFilter] = useState('all')
+  const [levelFilter, setLevelFilter] = useState('all')
+
+  const sharedPlansFromUrl = useMemo(() => {
+    const params = new URLSearchParams(window.location.search)
+    return decodePlansFromUrl(params.get('plans'))
+  }, [])
+
+  const publicPlans = useMemo(() => {
+    if (sharedPlansFromUrl && sharedPlansFromUrl.length > 0) {
+      return sharedPlansFromUrl
     }
-  }, [activePlanId, savedPlans])
 
-  function updateProfile<Key extends keyof FriendProfile>(
-    key: Key,
-    value: FriendProfile[Key],
-  ): void {
-    setProfile((current) => ({
-      ...current,
-      [key]: value,
-    }))
-  }
+    return trainerPlans
+  }, [sharedPlansFromUrl, trainerPlans])
 
-  function toggleEquipment(equipment: EquipmentTag): void {
-    setProfile((current) => {
-      if (current.context === 'palestra') {
-        return current
-      }
+  const selectedTrainerPlan = useMemo(
+    () => trainerPlans.find((plan) => plan.id === selectedTrainerPlanId) ?? null,
+    [selectedTrainerPlanId, trainerPlans],
+  )
 
-      return {
-        ...current,
-        equipment: current.equipment.includes(equipment)
-          ? current.equipment.filter((item) => item !== equipment)
-          : [...current.equipment, equipment],
-      }
+  const selectedPublicPlan = useMemo(
+    () => publicPlans.find((plan) => plan.id === selectedPublicPlanId) ?? null,
+    [publicPlans, selectedPublicPlanId],
+  )
+
+  const muscleOptions = useMemo(
+    () =>
+      [...new Set(exerciseLibrary.flatMap((exercise) => exercise.primaryMuscles))].sort(
+        (a, b) => a.localeCompare(b),
+      ),
+    [exerciseLibrary],
+  )
+
+  const equipmentOptions = useMemo(
+    () =>
+      [...new Set(exerciseLibrary.map((exercise) => exercise.equipment))].sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [exerciseLibrary],
+  )
+
+  const levelOptions = useMemo(
+    () =>
+      [...new Set(exerciseLibrary.map((exercise) => exercise.level))].sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [exerciseLibrary],
+  )
+
+  const matchingExercises = useMemo(() => {
+    const query = searchText.trim().toLowerCase()
+
+    return exerciseLibrary.filter((exercise) => {
+      const matchesSearch =
+        query.length === 0 ||
+        exercise.name.toLowerCase().includes(query) ||
+        exercise.primaryMuscles.join(' ').toLowerCase().includes(query) ||
+        exercise.equipment.toLowerCase().includes(query)
+
+      const matchesMuscle =
+        muscleFilter === 'all' || exercise.primaryMuscles.includes(muscleFilter)
+      const matchesEquipment =
+        equipmentFilter === 'all' || exercise.equipment === equipmentFilter
+      const matchesLevel = levelFilter === 'all' || exercise.level === levelFilter
+
+      return matchesSearch && matchesMuscle && matchesEquipment && matchesLevel
     })
-  }
+  }, [equipmentFilter, exerciseLibrary, levelFilter, muscleFilter, searchText])
 
-  function handleContextChange(context: TrainingContext): void {
-    setProfile((current) => ({
-      ...current,
-      context,
-      equipment: context === 'palestra' ? [] : current.equipment,
-    }))
-  }
+  const visibleExercises = useMemo(
+    () => matchingExercises.slice(0, MAX_LIBRARY_RESULTS),
+    [matchingExercises],
+  )
 
-  function handleGeneratePlan(event: FormEvent<HTMLFormElement>): void {
-    event.preventDefault()
+  useEffect(() => {
+    localStorage.setItem(TRAINER_STORAGE_KEY, JSON.stringify(trainerPlans))
+  }, [trainerPlans])
 
-    const friendName = profile.friendName.trim() || 'Atleta'
-    const profileForPlan: FriendProfile = {
-      ...profile,
-      friendName,
-      daysPerWeek: clamp(profile.daysPerWeek, 2, 6),
-      sessionMinutes: clamp(profile.sessionMinutes, 35, 120),
-      equipment: profile.context === 'palestra' ? [] : profile.equipment,
-    }
-
-    const generatedPlan = generateWorkoutPlan(profileForPlan)
-
-    setSavedPlans((current) => [generatedPlan, ...current])
-    setActivePlanId(generatedPlan.id)
-    setCopyFeedback('')
-  }
-
-  async function handleCopyPlan(): Promise<void> {
-    if (!activePlan) {
+  useEffect(() => {
+    if (trainerPlans.length === 0) {
+      setSelectedTrainerPlanId(null)
       return
     }
 
-    try {
-      await navigator.clipboard.writeText(formatPlanForClipboard(activePlan))
-      setCopyFeedback('Scheda copiata negli appunti.')
-    } catch {
-      setCopyFeedback('Clipboard non disponibile nel browser corrente.')
+    if (
+      !selectedTrainerPlanId ||
+      !trainerPlans.some((plan) => plan.id === selectedTrainerPlanId)
+    ) {
+      setSelectedTrainerPlanId(trainerPlans[0].id)
+    }
+  }, [selectedTrainerPlanId, trainerPlans])
+
+  useEffect(() => {
+    if (publicPlans.length === 0) {
+      setSelectedPublicPlanId(null)
+      return
     }
 
+    if (
+      !selectedPublicPlanId ||
+      !publicPlans.some((plan) => plan.id === selectedPublicPlanId)
+    ) {
+      setSelectedPublicPlanId(publicPlans[0].id)
+    }
+  }, [publicPlans, selectedPublicPlanId])
+
+  useEffect(() => {
+    if (!selectedTrainerPlan || selectedTrainerPlan.days.length === 0) {
+      setTargetDayId(null)
+      return
+    }
+
+    if (!targetDayId || !selectedTrainerPlan.days.some((day) => day.id === targetDayId)) {
+      setTargetDayId(selectedTrainerPlan.days[0].id)
+    }
+  }, [selectedTrainerPlan, targetDayId])
+
+  useEffect(() => {
+    let isMounted = true
+    setLibraryLoading(true)
+
+    fetchExerciseLibrary()
+      .then((items) => {
+        if (!isMounted) {
+          return
+        }
+
+        setExerciseLibrary(items)
+        setLibraryError('')
+      })
+      .catch(() => {
+        if (!isMounted) {
+          return
+        }
+
+        setExerciseLibrary(FALLBACK_EXERCISES)
+        setLibraryError(
+          'Connessione non disponibile: caricata una libreria locale ridotta.',
+        )
+      })
+      .finally(() => {
+        if (!isMounted) {
+          return
+        }
+
+        setLibraryLoading(false)
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  function setFeedback(message: string): void {
+    setTrainerFeedback(message)
     window.setTimeout(() => {
-      setCopyFeedback('')
-    }, 2200)
+      setTrainerFeedback('')
+    }, 2600)
+  }
+
+  function updateSelectedPlan(updater: (plan: FriendPlan) => FriendPlan): void {
+    if (!selectedTrainerPlanId) {
+      return
+    }
+
+    setTrainerPlans((current) =>
+      current.map((plan) => {
+        if (plan.id !== selectedTrainerPlanId) {
+          return plan
+        }
+
+        const updated = updater(plan)
+        return {
+          ...updated,
+          updatedAt: new Date().toISOString(),
+        }
+      }),
+    )
+  }
+
+  function handleCreatePlan(): void {
+    const freshPlan = createEmptyPlan()
+    setTrainerPlans((current) => [freshPlan, ...current])
+    setSelectedTrainerPlanId(freshPlan.id)
+    setViewMode('trainer')
   }
 
   function handleDeletePlan(planId: string): void {
-    const selectedPlan = savedPlans.find((plan) => plan.id === planId)
-    if (!selectedPlan) {
+    const planToDelete = trainerPlans.find((plan) => plan.id === planId)
+    if (!planToDelete) {
       return
     }
 
     const shouldDelete = window.confirm(
-      `Eliminare la scheda di ${selectedPlan.profile.friendName}?`,
+      `Eliminare la scheda di ${planToDelete.friendName}?`,
     )
 
     if (!shouldDelete) {
       return
     }
 
-    setSavedPlans((current) => {
-      const filtered = current.filter((plan) => plan.id !== planId)
-      if (activePlanId === planId) {
-        setActivePlanId(filtered[0]?.id ?? null)
+    setTrainerPlans((current) => current.filter((plan) => plan.id !== planId))
+    setFeedback('Scheda eliminata.')
+  }
+
+  function handlePlanFieldChange(
+    field: 'friendName' | 'objective' | 'duration' | 'coachNotes',
+    value: string,
+  ): void {
+    updateSelectedPlan((plan) => ({
+      ...plan,
+      [field]: value,
+    }))
+  }
+
+  function handleAddDay(): void {
+    updateSelectedPlan((plan) => ({
+      ...plan,
+      days: [...plan.days, createEmptyDay(plan.days.length + 1)],
+    }))
+  }
+
+  function handleDayFieldChange(
+    dayId: string,
+    field: 'title' | 'focus' | 'notes',
+    value: string,
+  ): void {
+    updateSelectedPlan((plan) => ({
+      ...plan,
+      days: plan.days.map((day) =>
+        day.id === dayId
+          ? {
+              ...day,
+              [field]: value,
+            }
+          : day,
+      ),
+    }))
+  }
+
+  function handleDeleteDay(dayId: string): void {
+    updateSelectedPlan((plan) => {
+      if (plan.days.length <= 1) {
+        return plan
       }
-      return filtered
+
+      return {
+        ...plan,
+        days: plan.days.filter((day) => day.id !== dayId),
+      }
     })
   }
 
+  function handleAddExerciseToTargetDay(exercise: ExerciseLibraryItem): void {
+    if (!targetDayId) {
+      setFeedback('Seleziona prima il giorno in cui aggiungere l esercizio.')
+      return
+    }
+
+    const newEntry: PlanExerciseEntry = {
+      id: createId('entry'),
+      exerciseId: exercise.id,
+      name: exercise.name,
+      imageUrl: exercise.imageUrl,
+      equipment: exercise.equipment,
+      primaryMuscles: exercise.primaryMuscles,
+      sets: '3',
+      reps: '8-12',
+      rest: '90 sec',
+      notes: '',
+    }
+
+    updateSelectedPlan((plan) => ({
+      ...plan,
+      days: plan.days.map((day) =>
+        day.id === targetDayId
+          ? {
+              ...day,
+              exercises: [...day.exercises, newEntry],
+            }
+          : day,
+      ),
+    }))
+  }
+
+  function handleExerciseFieldChange(
+    dayId: string,
+    entryId: string,
+    field: 'sets' | 'reps' | 'rest' | 'notes',
+    value: string,
+  ): void {
+    updateSelectedPlan((plan) => ({
+      ...plan,
+      days: plan.days.map((day) => {
+        if (day.id !== dayId) {
+          return day
+        }
+
+        return {
+          ...day,
+          exercises: day.exercises.map((exercise) =>
+            exercise.id === entryId
+              ? {
+                  ...exercise,
+                  [field]: value,
+                }
+              : exercise,
+          ),
+        }
+      }),
+    }))
+  }
+
+  function handleRemoveExercise(dayId: string, entryId: string): void {
+    updateSelectedPlan((plan) => ({
+      ...plan,
+      days: plan.days.map((day) =>
+        day.id === dayId
+          ? {
+              ...day,
+              exercises: day.exercises.filter((exercise) => exercise.id !== entryId),
+            }
+          : day,
+      ),
+    }))
+  }
+
+  async function handleCopyPlanText(): Promise<void> {
+    if (!selectedTrainerPlan) {
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(formatPlanForClipboard(selectedTrainerPlan))
+      setFeedback('Scheda copiata in formato testo.')
+    } catch {
+      setFeedback('Clipboard non disponibile in questo browser.')
+    }
+  }
+
+  async function handleCopyPublicLink(): Promise<void> {
+    if (trainerPlans.length === 0) {
+      setFeedback('Crea almeno una scheda prima di condividere il link.')
+      return
+    }
+
+    try {
+      const encodedPlans = encodePlansForUrl(trainerPlans)
+      const publicLink = `${window.location.origin}${window.location.pathname}?plans=${encodedPlans}`
+      await navigator.clipboard.writeText(publicLink)
+      setFeedback('Link pubblico copiato. Invia questo URL ai tuoi amici.')
+    } catch {
+      setFeedback('Non riesco a copiare il link automaticamente.')
+    }
+  }
+
+  function handleImportSharedPlans(): void {
+    if (!sharedPlansFromUrl || sharedPlansFromUrl.length === 0) {
+      return
+    }
+
+    setTrainerPlans(sharedPlansFromUrl)
+    setSelectedTrainerPlanId(sharedPlansFromUrl[0].id)
+    setViewMode('trainer')
+    setFeedback('Schede del link importate nella tua area Personal Trainer.')
+  }
+
+  function handleImageError(event: SyntheticEvent<HTMLImageElement>): void {
+    event.currentTarget.src = GENERIC_FALLBACK_IMAGE
+  }
+
   return (
-    <div className="app-shell">
-      <header className="hero-panel">
-        <p className="kicker">Coach Builder</p>
-        <h1>Schede Allenamento Per I Tuoi Amici</h1>
-        <p className="hero-subtitle">
-          Progetta programmi credibili da personal trainer, adatta il carico al
-          livello e conserva uno storico pronto da condividere.
-        </p>
-        <div className="hero-metrics">
-          <article>
-            <span>Schede Salvate</span>
-            <strong>{savedPlans.length}</strong>
-          </article>
-          <article>
-            <span>Sessioni Settimanali</span>
-            <strong>{activePlan?.days.length ?? profile.daysPerWeek}</strong>
-          </article>
-          <article>
-            <span>Durata Tipo</span>
-            <strong>{profile.sessionMinutes} min</strong>
-          </article>
+    <div className="workspace-shell">
+      <header className="main-hero">
+        <div>
+          <p className="eyebrow">Coach Landing</p>
+          <h1>Le Schede Del Team</h1>
+          <p>
+            I tuoi amici entrano dal link e aprono subito la loro scheda. Tu,
+            dalla sezione Personal Trainer, crei i programmi manualmente usando
+            una libreria ampia con immagini esercizi.
+          </p>
+        </div>
+
+        <div className="hero-actions">
+          {viewMode === 'public' ? (
+            <button className="btn-primary" onClick={() => setViewMode('trainer')}>
+              Entra In Area Personal Trainer
+            </button>
+          ) : (
+            <button className="btn-secondary" onClick={() => setViewMode('public')}>
+              Torna Alla Landing Pubblica
+            </button>
+          )}
+
+          {sharedPlansFromUrl ? (
+            <span className="pill">Modalita link condiviso attiva</span>
+          ) : (
+            <span className="pill muted">Modalita locale trainer</span>
+          )}
         </div>
       </header>
 
-      <main className="layout-grid">
-        <section className="panel panel-form">
-          <div className="panel-head">
-            <h2>Profilo Atleta</h2>
-            <p>
-              Imposta obiettivo, disponibilita e attrezzatura per creare una
-              scheda concreta e sostenibile.
-            </p>
-          </div>
+      {viewMode === 'public' ? (
+        <main className="public-grid">
+          <section className="surface public-list-panel">
+            <div className="panel-header">
+              <h2>Elenco Schede</h2>
+              <span>{publicPlans.length}</span>
+            </div>
 
-          <form className="planner-form" onSubmit={handleGeneratePlan}>
-            <label>
-              Nome amico
-              <input
-                type="text"
-                placeholder="Es. Marco"
-                value={profile.friendName}
-                onChange={(event) => updateProfile('friendName', event.target.value)}
-                required
-              />
-            </label>
+            {publicPlans.length === 0 ? (
+              <p className="empty-message">
+                Nessuna scheda disponibile. Entra nell area Personal Trainer per
+                crearne una.
+              </p>
+            ) : (
+              <ul className="public-plan-list">
+                {publicPlans.map((plan) => (
+                  <li key={plan.id}>
+                    <button
+                      type="button"
+                      className={plan.id === selectedPublicPlanId ? 'active' : ''}
+                      onClick={() => setSelectedPublicPlanId(plan.id)}
+                    >
+                      <strong>{plan.friendName}</strong>
+                      <span>{plan.objective}</span>
+                      <small>
+                        {plan.days.length} giorni · {countPlanExercises(plan)} esercizi
+                      </small>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
 
-            <div className="field-grid">
+          <section className="surface public-detail-panel">
+            {selectedPublicPlan ? (
+              <>
+                <header className="detail-header">
+                  <div>
+                    <p className="mini-label">Scheda di</p>
+                    <h2>{selectedPublicPlan.friendName}</h2>
+                    <p>
+                      {selectedPublicPlan.objective} · {selectedPublicPlan.duration}
+                    </p>
+                  </div>
+                  <div className="detail-stats">
+                    <span>Aggiornata: {formatDateLabel(selectedPublicPlan.updatedAt)}</span>
+                    <span>{countPlanExercises(selectedPublicPlan)} esercizi totali</span>
+                  </div>
+                </header>
+
+                {selectedPublicPlan.coachNotes.trim().length > 0 ? (
+                  <p className="coach-note">{selectedPublicPlan.coachNotes}</p>
+                ) : null}
+
+                <div className="public-days">
+                  {selectedPublicPlan.days.map((day) => (
+                    <article key={day.id} className="public-day-card">
+                      <header>
+                        <h3>{day.title}</h3>
+                        {day.focus ? <p>{day.focus}</p> : null}
+                      </header>
+
+                      {day.notes.trim().length > 0 ? (
+                        <p className="day-note">{day.notes}</p>
+                      ) : null}
+
+                      {day.exercises.length === 0 ? (
+                        <p className="empty-inline">Nessun esercizio inserito.</p>
+                      ) : (
+                        <div className="public-exercises">
+                          {day.exercises.map((exercise) => (
+                            <div key={exercise.id} className="public-exercise">
+                              <img
+                                src={exercise.imageUrl || GENERIC_FALLBACK_IMAGE}
+                                alt={exercise.name}
+                                loading="lazy"
+                                onError={handleImageError}
+                              />
+                              <div>
+                                <h4>{exercise.name}</h4>
+                                <p>
+                                  {exercise.sets} serie · {exercise.reps} reps · recupero{' '}
+                                  {exercise.rest}
+                                </p>
+                                <small>
+                                  {exercise.equipment}
+                                  {exercise.primaryMuscles.length > 0
+                                    ? ` · ${exercise.primaryMuscles.join(', ')}`
+                                    : ''}
+                                </small>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="empty-message-block">
+                <h2>Seleziona una scheda</h2>
+                <p>
+                  Clicca il nome dell atleta nella colonna di sinistra per vedere
+                  il piano completo.
+                </p>
+              </div>
+            )}
+          </section>
+        </main>
+      ) : (
+        <main className="trainer-grid">
+          <aside className="surface trainer-sidebar">
+            <div className="sidebar-actions">
+              <button className="btn-primary" onClick={handleCreatePlan}>
+                Nuova Scheda
+              </button>
+              <button className="btn-secondary" onClick={handleCopyPublicLink}>
+                Copia Link Pubblico
+              </button>
+
+              {sharedPlansFromUrl ? (
+                <button className="btn-secondary" onClick={handleImportSharedPlans}>
+                  Importa Schede Dal Link
+                </button>
+              ) : null}
+            </div>
+
+            {trainerFeedback ? <p className="feedback-banner">{trainerFeedback}</p> : null}
+
+            <div className="panel-header">
+              <h2>Le Tue Schede</h2>
+              <span>{trainerPlans.length}</span>
+            </div>
+
+            {trainerPlans.length === 0 ? (
+              <p className="empty-message">
+                Ancora nessuna scheda. Premi Nuova Scheda per iniziare.
+              </p>
+            ) : (
+              <ul className="trainer-plan-list">
+                {trainerPlans.map((plan) => (
+                  <li key={plan.id}>
+                    <button
+                      type="button"
+                      className={plan.id === selectedTrainerPlanId ? 'active' : ''}
+                      onClick={() => setSelectedTrainerPlanId(plan.id)}
+                    >
+                      <strong>{plan.friendName}</strong>
+                      <span>{plan.objective}</span>
+                      <small>{formatDateLabel(plan.updatedAt)}</small>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </aside>
+
+          <section className="surface trainer-editor">
+            {selectedTrainerPlan ? (
+              <>
+                <header className="editor-top">
+                  <div>
+                    <p className="mini-label">Editor Manuale</p>
+                    <h2>{selectedTrainerPlan.friendName}</h2>
+                  </div>
+                  <div className="editor-actions">
+                    <button className="btn-secondary" onClick={handleCopyPlanText}>
+                      Copia Scheda Testo
+                    </button>
+                    <button
+                      className="btn-danger"
+                      onClick={() => handleDeletePlan(selectedTrainerPlan.id)}
+                    >
+                      Elimina Scheda
+                    </button>
+                  </div>
+                </header>
+
+                <div className="meta-grid">
+                  <label>
+                    Nome atleta
+                    <input
+                      type="text"
+                      value={selectedTrainerPlan.friendName}
+                      onChange={(event) =>
+                        handlePlanFieldChange('friendName', event.target.value)
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    Obiettivo
+                    <input
+                      type="text"
+                      value={selectedTrainerPlan.objective}
+                      onChange={(event) =>
+                        handlePlanFieldChange('objective', event.target.value)
+                      }
+                      placeholder="Es. forza su panca e squat"
+                    />
+                  </label>
+
+                  <label>
+                    Durata blocco
+                    <input
+                      type="text"
+                      value={selectedTrainerPlan.duration}
+                      onChange={(event) =>
+                        handlePlanFieldChange('duration', event.target.value)
+                      }
+                      placeholder="Es. 6 settimane"
+                    />
+                  </label>
+                </div>
+
+                <label className="coach-notes">
+                  Note generali coach
+                  <textarea
+                    value={selectedTrainerPlan.coachNotes}
+                    rows={3}
+                    onChange={(event) =>
+                      handlePlanFieldChange('coachNotes', event.target.value)
+                    }
+                  />
+                </label>
+
+                <div className="days-header">
+                  <h3>Struttura Giorni</h3>
+                  <button className="btn-secondary" onClick={handleAddDay}>
+                    Aggiungi Giorno
+                  </button>
+                </div>
+
+                <div className="days-stack">
+                  {selectedTrainerPlan.days.map((day) => (
+                    <article
+                      key={day.id}
+                      className={`trainer-day-card ${targetDayId === day.id ? 'target' : ''}`}
+                    >
+                      <header className="day-card-head">
+                        <input
+                          type="text"
+                          value={day.title}
+                          onChange={(event) =>
+                            handleDayFieldChange(day.id, 'title', event.target.value)
+                          }
+                          placeholder="Titolo giorno"
+                        />
+                        <input
+                          type="text"
+                          value={day.focus}
+                          onChange={(event) =>
+                            handleDayFieldChange(day.id, 'focus', event.target.value)
+                          }
+                          placeholder="Focus (es. Push / Pull / Legs)"
+                        />
+                        <div className="day-card-actions">
+                          <button
+                            className="btn-secondary"
+                            onClick={() => setTargetDayId(day.id)}
+                          >
+                            Destinazione Libreria
+                          </button>
+                          <button
+                            className="btn-danger ghost"
+                            onClick={() => handleDeleteDay(day.id)}
+                            disabled={selectedTrainerPlan.days.length === 1}
+                          >
+                            Rimuovi Giorno
+                          </button>
+                        </div>
+                      </header>
+
+                      <label>
+                        Note giorno
+                        <textarea
+                          rows={2}
+                          value={day.notes}
+                          onChange={(event) =>
+                            handleDayFieldChange(day.id, 'notes', event.target.value)
+                          }
+                        />
+                      </label>
+
+                      {day.exercises.length === 0 ? (
+                        <p className="empty-inline">
+                          Nessun esercizio. Seleziona questo giorno come destinazione e
+                          aggiungi dalla libreria a destra.
+                        </p>
+                      ) : (
+                        <div className="trainer-exercise-list">
+                          {day.exercises.map((exercise) => (
+                            <div key={exercise.id} className="trainer-exercise-row">
+                              <img
+                                src={exercise.imageUrl || GENERIC_FALLBACK_IMAGE}
+                                alt={exercise.name}
+                                loading="lazy"
+                                onError={handleImageError}
+                              />
+
+                              <div className="exercise-edit-fields">
+                                <h4>{exercise.name}</h4>
+                                <p>
+                                  {exercise.equipment}
+                                  {exercise.primaryMuscles.length > 0
+                                    ? ` · ${exercise.primaryMuscles.join(', ')}`
+                                    : ''}
+                                </p>
+
+                                <div className="micro-grid">
+                                  <label>
+                                    Serie
+                                    <input
+                                      type="text"
+                                      value={exercise.sets}
+                                      onChange={(event) =>
+                                        handleExerciseFieldChange(
+                                          day.id,
+                                          exercise.id,
+                                          'sets',
+                                          event.target.value,
+                                        )
+                                      }
+                                    />
+                                  </label>
+                                  <label>
+                                    Reps
+                                    <input
+                                      type="text"
+                                      value={exercise.reps}
+                                      onChange={(event) =>
+                                        handleExerciseFieldChange(
+                                          day.id,
+                                          exercise.id,
+                                          'reps',
+                                          event.target.value,
+                                        )
+                                      }
+                                    />
+                                  </label>
+                                  <label>
+                                    Recupero
+                                    <input
+                                      type="text"
+                                      value={exercise.rest}
+                                      onChange={(event) =>
+                                        handleExerciseFieldChange(
+                                          day.id,
+                                          exercise.id,
+                                          'rest',
+                                          event.target.value,
+                                        )
+                                      }
+                                    />
+                                  </label>
+                                </div>
+
+                                <label>
+                                  Note esercizio
+                                  <textarea
+                                    rows={2}
+                                    value={exercise.notes}
+                                    onChange={(event) =>
+                                      handleExerciseFieldChange(
+                                        day.id,
+                                        exercise.id,
+                                        'notes',
+                                        event.target.value,
+                                      )
+                                    }
+                                  />
+                                </label>
+                              </div>
+
+                              <button
+                                className="btn-danger ghost"
+                                onClick={() => handleRemoveExercise(day.id, exercise.id)}
+                              >
+                                Rimuovi
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="empty-message-block">
+                <h2>Nessuna scheda selezionata</h2>
+                <p>Crea o seleziona una scheda dalla colonna sinistra.</p>
+              </div>
+            )}
+          </section>
+
+          <aside className="surface trainer-library">
+            <header className="library-header">
+              <h2>Libreria Esercizi</h2>
+              <p>
+                Dataset open con immagini: {exerciseLibrary.length} esercizi caricati.
+              </p>
+            </header>
+
+            <div className="library-filters">
               <label>
-                Obiettivo
+                Cerca esercizio
+                <input
+                  type="text"
+                  value={searchText}
+                  onChange={(event) => setSearchText(event.target.value)}
+                  placeholder="Es. bench press, squat, lat pulldown"
+                />
+              </label>
+
+              <label>
+                Muscolo principale
                 <select
-                  value={profile.goal}
-                  onChange={(event) =>
-                    updateProfile('goal', event.target.value as FriendProfile['goal'])
-                  }
+                  value={muscleFilter}
+                  onChange={(event) => setMuscleFilter(event.target.value)}
                 >
-                  {goalOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
+                  <option value="all">Tutti</option>
+                  {muscleOptions.map((muscle) => (
+                    <option key={muscle} value={muscle}>
+                      {toLabel(muscle)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Attrezzatura
+                <select
+                  value={equipmentFilter}
+                  onChange={(event) => setEquipmentFilter(event.target.value)}
+                >
+                  <option value="all">Tutte</option>
+                  {equipmentOptions.map((equipment) => (
+                    <option key={equipment} value={equipment}>
+                      {toLabel(equipment)}
                     </option>
                   ))}
                 </select>
@@ -237,248 +925,68 @@ function App() {
               <label>
                 Livello
                 <select
-                  value={profile.level}
-                  onChange={(event) =>
-                    updateProfile('level', event.target.value as FriendProfile['level'])
-                  }
+                  value={levelFilter}
+                  onChange={(event) => setLevelFilter(event.target.value)}
                 >
-                  {levelOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
+                  <option value="all">Tutti</option>
+                  {levelOptions.map((level) => (
+                    <option key={level} value={level}>
+                      {toLabel(level)}
                     </option>
                   ))}
                 </select>
               </label>
             </div>
 
-            <div className="field-grid">
-              <label>
-                Giorni a settimana
-                <input
-                  type="number"
-                  min={2}
-                  max={6}
-                  value={profile.daysPerWeek}
-                  onChange={(event) =>
-                    updateProfile(
-                      'daysPerWeek',
-                      clamp(Number(event.target.value), 2, 6),
-                    )
-                  }
-                />
-              </label>
+            {libraryError ? <p className="warning-banner">{libraryError}</p> : null}
 
-              <label>
-                Minuti per sessione
-                <input
-                  type="number"
-                  min={35}
-                  max={120}
-                  step={5}
-                  value={profile.sessionMinutes}
-                  onChange={(event) =>
-                    updateProfile(
-                      'sessionMinutes',
-                      clamp(Number(event.target.value), 35, 120),
-                    )
-                  }
-                />
-              </label>
+            <p className="library-meta">
+              {libraryLoading
+                ? 'Caricamento libreria in corso...'
+                : `${matchingExercises.length} risultati, mostrati i primi ${visibleExercises.length}.`}
+            </p>
+
+            <p className="target-info">
+              Giorno destinazione:{' '}
+              <strong>
+                {selectedTrainerPlan?.days.find((day) => day.id === targetDayId)?.title ??
+                  'non selezionato'}
+              </strong>
+            </p>
+
+            <div className="library-grid">
+              {visibleExercises.map((exercise) => (
+                <article key={exercise.id} className="library-card">
+                  <img
+                    src={exercise.imageUrl || GENERIC_FALLBACK_IMAGE}
+                    alt={exercise.name}
+                    loading="lazy"
+                    onError={handleImageError}
+                  />
+                  <div>
+                    <h4>{exercise.name}</h4>
+                    <p>
+                      {toLabel(exercise.equipment)} · {toLabel(exercise.level)}
+                    </p>
+                    <small>
+                      {exercise.primaryMuscles.length > 0
+                        ? exercise.primaryMuscles.map((muscle) => toLabel(muscle)).join(', ')
+                        : 'Muscoli non specificati'}
+                    </small>
+                  </div>
+                  <button
+                    className="btn-primary"
+                    disabled={!targetDayId || !selectedTrainerPlan}
+                    onClick={() => handleAddExerciseToTargetDay(exercise)}
+                  >
+                    Aggiungi Al Giorno
+                  </button>
+                </article>
+              ))}
             </div>
-
-            <label>
-              Contesto
-              <select
-                value={profile.context}
-                onChange={(event) =>
-                  handleContextChange(event.target.value as FriendProfile['context'])
-                }
-              >
-                {contextOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            {profile.context !== 'palestra' ? (
-              <fieldset className="equipment-fieldset">
-                <legend>Attrezzatura disponibile</legend>
-                <div className="chip-grid">
-                  {equipmentOptions.map((option) => {
-                    const isChecked = profile.equipment.includes(option.value)
-
-                    return (
-                      <label
-                        key={option.value}
-                        className={`chip ${isChecked ? 'selected' : ''}`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => toggleEquipment(option.value)}
-                        />
-                        <span>{option.label}</span>
-                      </label>
-                    )
-                  })}
-                </div>
-              </fieldset>
-            ) : null}
-
-            <label>
-              Note o limitazioni
-              <textarea
-                placeholder="Es. lieve fastidio alla spalla destra in overhead"
-                value={profile.notes}
-                onChange={(event) => updateProfile('notes', event.target.value)}
-                rows={4}
-              />
-            </label>
-
-            <div className="button-row">
-              <button type="submit" className="btn-primary">
-                Genera Scheda
-              </button>
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => setProfile(defaultProfile)}
-              >
-                Reset Profilo
-              </button>
-            </div>
-          </form>
-
-          <aside className="saved-plans">
-            <div className="saved-plans-head">
-              <h3>Archivio Schede</h3>
-              <span>{savedPlans.length}</span>
-            </div>
-            {savedPlans.length === 0 ? (
-              <p className="empty-note">
-                Nessuna scheda salvata. Generane una per iniziare.
-              </p>
-            ) : (
-              <ul>
-                {savedPlans.map((plan) => (
-                  <li key={plan.id}>
-                    <button
-                      type="button"
-                      className={plan.id === activePlanId ? 'active' : ''}
-                      onClick={() => setActivePlanId(plan.id)}
-                    >
-                      <strong>{plan.profile.friendName}</strong>
-                      <span>{formatDateLabel(plan.createdAt)}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
           </aside>
-        </section>
-
-        <section className="panel panel-plan">
-          {activePlan ? (
-            <>
-              <header className="plan-head">
-                <div>
-                  <p className="plan-meta">Programma Attivo</p>
-                  <h2>{activePlan.profile.friendName}</h2>
-                  <p>
-                    {formatDateLabel(activePlan.createdAt)} · {activePlan.days.length}{' '}
-                    sessioni
-                  </p>
-                </div>
-                <div className="plan-actions">
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={handleCopyPlan}
-                  >
-                    Copia Testo
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-danger"
-                    onClick={() => handleDeletePlan(activePlan.id)}
-                  >
-                    Elimina
-                  </button>
-                </div>
-              </header>
-
-              {copyFeedback ? <p className="copy-feedback">{copyFeedback}</p> : null}
-
-              <section className="guidelines">
-                <h3>Linee Guida Settimanali</h3>
-                <ul>
-                  {activePlan.weeklyGuidelines.map((guideline, index) => (
-                    <li key={guideline}>{`${index + 1}. ${guideline}`}</li>
-                  ))}
-                </ul>
-              </section>
-
-              <section className="days-grid" aria-label="Dettaglio giorni allenamento">
-                {activePlan.days.map((day, index) => (
-                  <article
-                    key={`${day.title}-${day.focus}`}
-                    className="day-card"
-                    style={{ animationDelay: `${index * 90}ms` }}
-                  >
-                    <header>
-                      <p>{day.title}</p>
-                      <h4>{day.focus}</h4>
-                    </header>
-
-                    <div className="day-block">
-                      <h5>Warm-up</h5>
-                      <ul>
-                        {day.warmup.map((item) => (
-                          <li key={item}>{item}</li>
-                        ))}
-                      </ul>
-                    </div>
-
-                    <div className="exercise-table">
-                      {day.exercises.map((exercise) => (
-                        <div key={`${day.title}-${exercise.block}`} className="exercise-row">
-                          <p>{exercise.block}</p>
-                          <h5>{exercise.name}</h5>
-                          <p>{exercise.prescription}</p>
-                          <small>{exercise.note}</small>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="day-block">
-                      <h5>Finisher</h5>
-                      <p>{day.finisher}</p>
-                    </div>
-
-                    <div className="day-block">
-                      <h5>Cooldown</h5>
-                      <ul>
-                        {day.cooldown.map((item) => (
-                          <li key={item}>{item}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  </article>
-                ))}
-              </section>
-            </>
-          ) : (
-            <div className="empty-plan">
-              <h2>Nessuna Scheda Selezionata</h2>
-              <p>
-                Compila il profilo a sinistra e crea la prima programmazione.
-              </p>
-            </div>
-          )}
-        </section>
-      </main>
+        </main>
+      )}
     </div>
   )
 }
