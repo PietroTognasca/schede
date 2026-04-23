@@ -37,10 +37,11 @@ export interface FriendPlan {
 }
 
 const DEFAULT_OBJECTIVE = 'Ipertrofia generale'
-const SHARE_PAYLOAD_VERSION = 2
+const SHARE_PAYLOAD_VERSION = 3
+const SHARE_PAYLOAD_VERSION_V2 = 2
 
 interface SharedExerciseV2 {
-  n: string
+  n?: string
   i?: string
   e?: string
   m?: string[]
@@ -238,20 +239,51 @@ function shouldIncludeImageUrl(imageUrl: string, exerciseId: string): boolean {
   return true
 }
 
+function labelFromExerciseId(exerciseId: string): string {
+  const normalized = exerciseId
+    .trim()
+    .replace(/^custom-exercise-/, '')
+    .replace(/^shared-exercise-/, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+
+  if (!normalized) {
+    return ''
+  }
+
+  return normalized
+    .split(' ')
+    .filter((piece) => piece.length > 0)
+    .map((piece) => piece.charAt(0).toUpperCase() + piece.slice(1))
+    .join(' ')
+}
+
 function toSharedExerciseV2(exercise: PlanExerciseEntry): SharedExerciseV2 {
-  const shared: SharedExerciseV2 = {
-    n: exercise.name,
+  const shared: SharedExerciseV2 = {}
+
+  const exerciseId = exercise.exerciseId.trim()
+  const isCustomExercise =
+    exerciseId.length === 0 || exerciseId.startsWith('custom-exercise-')
+
+  if (exerciseId.length > 0) {
+    shared.i = exerciseId
   }
 
-  if (exercise.exerciseId.trim().length > 0) {
-    shared.i = exercise.exerciseId
+  // For built-in exercises we can rebuild the display name from exerciseId,
+  // so we keep `n` only for custom entries to keep shared URLs shorter.
+  if (isCustomExercise && exercise.name.trim().length > 0) {
+    shared.n = exercise.name
   }
 
-  if (exercise.equipment.trim().length > 0 && exercise.equipment !== 'N/A') {
+  if (
+    isCustomExercise &&
+    exercise.equipment.trim().length > 0 &&
+    exercise.equipment !== 'N/A'
+  ) {
     shared.e = exercise.equipment
   }
 
-  if (exercise.primaryMuscles.length > 0) {
+  if (isCustomExercise && exercise.primaryMuscles.length > 0) {
     shared.m = exercise.primaryMuscles
   }
 
@@ -298,15 +330,17 @@ function fromSharedExerciseV2(value: unknown): PlanExerciseEntry | null {
     return null
   }
 
-  const name = typeof value.n === 'string' ? value.n.trim() : ''
-  if (!name) {
-    return null
-  }
-
   const exerciseId =
     typeof value.i === 'string' && value.i.trim().length > 0
       ? value.i
       : createId('shared-exercise')
+
+  const explicitName = typeof value.n === 'string' ? value.n.trim() : ''
+  const inferredName = labelFromExerciseId(exerciseId)
+  const name = explicitName || inferredName
+  if (!name) {
+    return null
+  }
 
   const explicitImage =
     typeof value.u === 'string' && value.u.trim().length > 0 ? value.u.trim() : ''
@@ -407,7 +441,10 @@ function decodeV2Payload(input: unknown): FriendPlan[] | null {
   const version = input.v
   const plansPayload = input.p
 
-  if (version !== SHARE_PAYLOAD_VERSION || !Array.isArray(plansPayload)) {
+  if (
+    (version !== SHARE_PAYLOAD_VERSION && version !== SHARE_PAYLOAD_VERSION_V2) ||
+    !Array.isArray(plansPayload)
+  ) {
     return null
   }
 

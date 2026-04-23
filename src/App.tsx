@@ -93,6 +93,15 @@ function toLabel(value: string): string {
 }
 
 function readSharedPlansTokenFromLocation(): string | null {
+  if (window.location.hash.startsWith('#p=')) {
+    const rawHashToken = window.location.hash.slice('#p='.length)
+    try {
+      return decodeURIComponent(rawHashToken)
+    } catch {
+      return rawHashToken
+    }
+  }
+
   if (window.location.hash.startsWith('#plans=')) {
     const rawHashToken = window.location.hash.slice('#plans='.length)
     try {
@@ -103,11 +112,11 @@ function readSharedPlansTokenFromLocation(): string | null {
   }
 
   const params = new URLSearchParams(window.location.search)
-  return params.get('plans')
+  return params.get('p') ?? params.get('plans')
 }
 
 function buildPublicShareLink(encodedPlans: string): string {
-  return `${window.location.origin}${window.location.pathname}?plans=${encodeURIComponent(encodedPlans)}`
+  return `${window.location.origin}${window.location.pathname}?p=${encodedPlans}`
 }
 
 function App() {
