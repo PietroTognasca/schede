@@ -2,6 +2,7 @@ import {
   compressToEncodedURIComponent,
   decompressFromEncodedURIComponent,
 } from 'lz-string'
+import { buildExerciseImageUrlFromId } from './exerciseLibrary'
 
 export interface PlanExerciseEntry {
   id: string
@@ -36,6 +37,39 @@ export interface FriendPlan {
 }
 
 const DEFAULT_OBJECTIVE = 'Ipertrofia generale'
+const SHARE_PAYLOAD_VERSION = 2
+
+interface SharedExerciseV2 {
+  n: string
+  i?: string
+  e?: string
+  m?: string[]
+  s?: string
+  r?: string
+  t?: string
+  o?: string
+  u?: string
+}
+
+interface SharedDayV2 {
+  t: string
+  f?: string
+  n?: string
+  x: SharedExerciseV2[]
+}
+
+interface SharedPlanV2 {
+  n: string
+  o?: string
+  d?: string
+  c?: string
+  y: SharedDayV2[]
+}
+
+interface SharedEnvelopeV2 {
+  v: number
+  p: SharedPlanV2[]
+}
 
 function randomToken(): string {
   return Math.random().toString(36).slice(2, 10)
@@ -96,7 +130,10 @@ function normalizeExercise(value: unknown): PlanExerciseEntry | null {
     id,
     exerciseId: typeof value.exerciseId === 'string' ? value.exerciseId : id,
     name,
-    imageUrl: typeof value.imageUrl === 'string' ? value.imageUrl : '',
+    imageUrl:
+      typeof value.imageUrl === 'string' && !value.imageUrl.startsWith('data:image')
+        ? value.imageUrl
+        : '',
     equipment: typeof value.equipment === 'string' ? value.equipment : 'N/A',
     primaryMuscles,
     sets: typeof value.sets === 'string' ? value.sets : '3',
@@ -176,11 +213,236 @@ export function normalizePlans(input: unknown): FriendPlan[] {
     .filter((plan): plan is FriendPlan => plan !== null)
 }
 
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
+function shouldIncludeImageUrl(imageUrl: string, exerciseId: string): boolean {
+  const normalized = imageUrl.trim()
+  if (!normalized || normalized.startsWith('data:image')) {
+    return false
+  }
+
+  if (
+    exerciseId.length > 0 &&
+    !exerciseId.startsWith('custom-exercise-') &&
+    normalized === buildExerciseImageUrlFromId(exerciseId)
+  ) {
+    return false
+  }
+
+  return true
+}
+
+function toSharedExerciseV2(exercise: PlanExerciseEntry): SharedExerciseV2 {
+  const shared: SharedExerciseV2 = {
+    n: exercise.name,
+  }
+
+  if (exercise.exerciseId.trim().length > 0) {
+    shared.i = exercise.exerciseId
+  }
+
+  if (exercise.equipment.trim().length > 0 && exercise.equipment !== 'N/A') {
+    shared.e = exercise.equipment
+  }
+
+  if (exercise.primaryMuscles.length > 0) {
+    shared.m = exercise.primaryMuscles
+  }
+
+  if (exercise.sets !== '3') {
+    shared.s = exercise.sets
+  }
+
+  if (exercise.reps !== '8-12') {
+    shared.r = exercise.reps
+  }
+
+  if (exercise.rest !== '90 sec') {
+    shared.t = exercise.rest
+  }
+
+  if (exercise.notes.trim().length > 0) {
+    shared.o = exercise.notes
+  }
+
+  if (shouldIncludeImageUrl(exercise.imageUrl, exercise.exerciseId)) {
+    shared.u = exercise.imageUrl
+  }
+
+  return shared
+}
+
+function toSharedPlanV2(plan: FriendPlan): SharedPlanV2 {
+  return {
+    n: plan.friendName.trim(),
+    o: plan.objective.trim(),
+    d: plan.duration.trim(),
+    c: plan.coachNotes.trim(),
+    y: plan.days.map((day) => ({
+      t: day.title,
+      f: day.focus,
+      n: day.notes,
+      x: day.exercises.map(toSharedExerciseV2),
+    })),
+  }
+}
+
+function fromSharedExerciseV2(value: unknown): PlanExerciseEntry | null {
+  if (!isObject(value)) {
+    return null
+  }
+
+  const name = typeof value.n === 'string' ? value.n.trim() : ''
+  if (!name) {
+    return null
+  }
+
+  const exerciseId =
+    typeof value.i === 'string' && value.i.trim().length > 0
+      ? value.i
+      : createId('shared-exercise')
+
+  const explicitImage =
+    typeof value.u === 'string' && value.u.trim().length > 0 ? value.u.trim() : ''
+  const inferredImage =
+    explicitImage.length === 0 && !exerciseId.startsWith('custom-exercise-')
+      ? buildExerciseImageUrlFromId(exerciseId)
+      : ''
+
+  const primaryMuscles = Array.isArray(value.m)
+    ? value.m.filter((muscle): muscle is string => typeof muscle === 'string')
+    : []
+
+  return {
+    id: createId('entry'),
+    exerciseId,
+    name,
+    imageUrl: explicitImage || inferredImage,
+    equipment: typeof value.e === 'string' && value.e.trim().length > 0 ? value.e : 'N/A',
+    primaryMuscles,
+    sets: typeof value.s === 'string' && value.s.trim().length > 0 ? value.s : '3',
+    reps: typeof value.r === 'string' && value.r.trim().length > 0 ? value.r : '8-12',
+    rest: typeof value.t === 'string' && value.t.trim().length > 0 ? value.t : '90 sec',
+    notes: typeof value.o === 'string' ? value.o : '',
+  }
+}
+
+function fromSharedDayV2(value: unknown, dayIndex: number): PlanDay | null {
+  if (!isObject(value)) {
+    return null
+  }
+
+  const title =
+    typeof value.t === 'string' && value.t.trim().length > 0
+      ? value.t
+      : `Giorno ${dayIndex + 1}`
+
+  const exercisesInput = Array.isArray(value.x) ? value.x : []
+  const exercises = exercisesInput
+    .map((exercise) => fromSharedExerciseV2(exercise))
+    .filter((exercise): exercise is PlanExerciseEntry => exercise !== null)
+
+  return {
+    id: createId('day'),
+    title,
+    focus: typeof value.f === 'string' ? value.f : '',
+    notes: typeof value.n === 'string' ? value.n : '',
+    exercises,
+  }
+}
+
+function fromSharedPlanV2(value: unknown): FriendPlan | null {
+  if (!isObject(value)) {
+    return null
+  }
+
+  const friendName =
+    typeof value.n === 'string' && value.n.trim().length > 0
+      ? value.n.trim()
+      : ''
+
+  if (!friendName) {
+    return null
+  }
+
+  const now = new Date().toISOString()
+  const daysInput = Array.isArray(value.y) ? value.y : []
+  const days = daysInput
+    .map((day, index) => fromSharedDayV2(day, index))
+    .filter((day): day is PlanDay => day !== null)
+
+  if (days.length === 0) {
+    days.push(createEmptyDay(1))
+  }
+
+  return {
+    id: createId('plan'),
+    friendName,
+    objective:
+      typeof value.o === 'string' && value.o.trim().length > 0
+        ? value.o
+        : DEFAULT_OBJECTIVE,
+    duration:
+      typeof value.d === 'string' && value.d.trim().length > 0
+        ? value.d
+        : '4 settimane',
+    coachNotes: typeof value.c === 'string' ? value.c : '',
+    createdAt: now,
+    updatedAt: now,
+    days,
+  }
+}
+
+function decodeV2Payload(input: unknown): FriendPlan[] | null {
+  if (!isObject(input)) {
+    return null
+  }
+
+  const version = input.v
+  const plansPayload = input.p
+
+  if (version !== SHARE_PAYLOAD_VERSION || !Array.isArray(plansPayload)) {
+    return null
+  }
+
+  const plans = plansPayload
+    .map((plan) => fromSharedPlanV2(plan))
+    .filter((plan): plan is FriendPlan => plan !== null)
+
+  return plans.length > 0 ? plans : null
+}
+
+function decodeFromEncodedPayload(encoded: string): FriendPlan[] | null {
+  try {
+    const json = decompressFromEncodedURIComponent(encoded)
+    if (!json) {
+      return null
+    }
+
+    const parsed = JSON.parse(json)
+    const compactPlans = decodeV2Payload(parsed)
+    if (compactPlans) {
+      return compactPlans
+    }
+
+    const legacyPlans = normalizePlans(parsed)
+    return legacyPlans.length > 0 ? legacyPlans : null
+  } catch {
+    return null
+  }
+}
+
 export function encodePlansForUrl(plans: FriendPlan[]): string {
-  const payload = plans.map((plan) => ({
-    ...plan,
-    friendName: plan.friendName.trim(),
-  }))
+  const payload: SharedEnvelopeV2 = {
+    v: SHARE_PAYLOAD_VERSION,
+    p: plans.map((plan) => toSharedPlanV2(plan)),
+  }
 
   return compressToEncodedURIComponent(JSON.stringify(payload))
 }
@@ -190,18 +452,29 @@ export function decodePlansFromUrl(encoded: string | null): FriendPlan[] | null 
     return null
   }
 
-  try {
-    const json = decompressFromEncodedURIComponent(encoded)
-    if (!json) {
-      return null
-    }
-
-    const parsed = JSON.parse(json)
-    const plans = normalizePlans(parsed)
-    return plans.length > 0 ? plans : null
-  } catch {
+  const trimmed = encoded.trim()
+  if (!trimmed) {
     return null
   }
+
+  const decodedComponent = safeDecodeURIComponent(trimmed)
+  const candidates = Array.from(
+    new Set([
+      trimmed,
+      trimmed.replace(/ /g, '+'),
+      decodedComponent,
+      decodedComponent.replace(/ /g, '+'),
+    ]),
+  )
+
+  for (const candidate of candidates) {
+    const decoded = decodeFromEncodedPayload(candidate)
+    if (decoded && decoded.length > 0) {
+      return decoded
+    }
+  }
+
+  return null
 }
 
 export function formatDateLabel(dateIso: string): string {

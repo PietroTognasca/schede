@@ -1,5 +1,6 @@
 import { type SyntheticEvent, useEffect, useMemo, useState } from 'react'
 import './App.css'
+import exercisePlaceholder from './assets/exercise-placeholder.svg'
 import {
   FALLBACK_EXERCISES,
   fetchExerciseLibrary,
@@ -22,7 +23,7 @@ import {
 const TRAINER_STORAGE_KEY = 'schede-manuali-trainer-v2'
 const TRAINER_BACKUP_STORAGE_KEY = 'schede-manuali-trainer-v2-backup'
 const MAX_LIBRARY_RESULTS = 90
-const GENERIC_FALLBACK_IMAGE = FALLBACK_EXERCISES[0].imageUrl
+const GENERIC_FALLBACK_IMAGE = exercisePlaceholder
 
 interface CustomExerciseDraft {
   name: string
@@ -91,6 +92,20 @@ function toLabel(value: string): string {
     .join(' ')
 }
 
+function readSharedPlansTokenFromLocation(): string | null {
+  if (window.location.hash.startsWith('#plans=')) {
+    const rawHashToken = window.location.hash.slice('#plans='.length)
+    try {
+      return decodeURIComponent(rawHashToken)
+    } catch {
+      return rawHashToken
+    }
+  }
+
+  const params = new URLSearchParams(window.location.search)
+  return params.get('plans')
+}
+
 function App() {
   const [viewMode, setViewMode] = useState<'public' | 'trainer'>('public')
   const [trainerPlans, setTrainerPlans] = useState<FriendPlan[]>(() =>
@@ -119,8 +134,7 @@ function App() {
     useState<CustomExerciseDraft>(INITIAL_CUSTOM_EXERCISE_DRAFT)
 
   const sharedPlansFromUrl = useMemo(() => {
-    const params = new URLSearchParams(window.location.search)
-    return decodePlansFromUrl(params.get('plans'))
+    return decodePlansFromUrl(readSharedPlansTokenFromLocation())
   }, [])
 
   const publicPlans = useMemo(() => {
@@ -386,7 +400,7 @@ function App() {
       id: createId('entry'),
       exerciseId: exercise.id,
       name: exercise.name,
-      imageUrl: exercise.imageUrl,
+      imageUrl: exercise.imageUrl.startsWith('data:image') ? '' : exercise.imageUrl,
       equipment: exercise.equipment,
       primaryMuscles: exercise.primaryMuscles,
       sets: '3',
@@ -518,7 +532,7 @@ function App() {
       id: createId('entry'),
       exerciseId: createId('custom-exercise'),
       name: customName,
-      imageUrl: customExerciseDraft.imageUrl.trim() || GENERIC_FALLBACK_IMAGE,
+      imageUrl: customExerciseDraft.imageUrl.trim(),
       equipment: customExerciseDraft.equipment.trim() || 'Custom',
       primaryMuscles: muscles,
       sets: '3',
@@ -564,7 +578,7 @@ function App() {
 
     try {
       const encodedPlans = encodePlansForUrl(trainerPlans)
-      const publicLink = `${window.location.origin}${window.location.pathname}?plans=${encodedPlans}`
+      const publicLink = `${window.location.origin}${window.location.pathname}#plans=${encodeURIComponent(encodedPlans)}`
       await navigator.clipboard.writeText(publicLink)
       setFeedback('Link pubblico copiato. Invia questo URL ai tuoi amici.')
     } catch {

@@ -3,6 +3,10 @@ const EXERCISE_DATA_URL =
 const EXERCISE_IMAGE_BASE_URL =
   'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises/'
 
+export function buildExerciseImageUrlFromId(exerciseId: string): string {
+  return `${EXERCISE_IMAGE_BASE_URL}${encodeURIComponent(exerciseId)}/0.jpg`
+}
+
 interface RemoteExercise {
   id: string
   name: string

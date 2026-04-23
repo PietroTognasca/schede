@@ -21,7 +21,7 @@ Web app React + Vite pensata per personal trainer che vogliono:
 
 3. Condivisione senza backend:
    - clic su `Copia Link Pubblico`
-   - viene generato un URL unico con le schede codificate
+   - viene generato un URL unico con le schede codificate nel frammento `#plans=...`
    - invii quel link ai tuoi amici
 
 ## Persistenza e sicurezza dati
