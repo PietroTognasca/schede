@@ -20,17 +20,59 @@ import {
 } from './lib/manualPlan'
 
 const TRAINER_STORAGE_KEY = 'schede-manuali-trainer-v2'
+const TRAINER_BACKUP_STORAGE_KEY = 'schede-manuali-trainer-v2-backup'
 const MAX_LIBRARY_RESULTS = 90
 const GENERIC_FALLBACK_IMAGE = FALLBACK_EXERCISES[0].imageUrl
 
-function loadTrainerPlans(): FriendPlan[] {
+interface CustomExerciseDraft {
+  name: string
+  equipment: string
+  primaryMuscles: string
+  imageUrl: string
+  notes: string
+}
+
+const INITIAL_CUSTOM_EXERCISE_DRAFT: CustomExerciseDraft = {
+  name: '',
+  equipment: '',
+  primaryMuscles: '',
+  imageUrl: '',
+  notes: '',
+}
+
+function parseStoredPlans(raw: string | null): FriendPlan[] {
+  if (!raw) {
+    return []
+  }
+
   try {
-    const raw = localStorage.getItem(TRAINER_STORAGE_KEY)
-    if (!raw) {
-      return []
+    return normalizePlans(JSON.parse(raw))
+  } catch {
+    return []
+  }
+}
+
+function loadTrainerPlans(): FriendPlan[] {
+  const currentPlans = parseStoredPlans(localStorage.getItem(TRAINER_STORAGE_KEY))
+  if (currentPlans.length > 0) {
+    return currentPlans
+  }
+
+  const backupRaw = localStorage.getItem(TRAINER_BACKUP_STORAGE_KEY)
+  if (!backupRaw) {
+    return []
+  }
+
+  try {
+    const parsedBackup = JSON.parse(backupRaw) as {
+      plans?: unknown
     }
 
-    return normalizePlans(JSON.parse(raw))
+    if (Array.isArray(parsedBackup)) {
+      return normalizePlans(parsedBackup)
+    }
+
+    return normalizePlans(parsedBackup.plans)
   } catch {
     return []
   }
@@ -73,6 +115,8 @@ function App() {
   const [muscleFilter, setMuscleFilter] = useState('all')
   const [equipmentFilter, setEquipmentFilter] = useState('all')
   const [levelFilter, setLevelFilter] = useState('all')
+  const [customExerciseDraft, setCustomExerciseDraft] =
+    useState<CustomExerciseDraft>(INITIAL_CUSTOM_EXERCISE_DRAFT)
 
   const sharedPlansFromUrl = useMemo(() => {
     const params = new URLSearchParams(window.location.search)
@@ -148,6 +192,13 @@ function App() {
 
   useEffect(() => {
     localStorage.setItem(TRAINER_STORAGE_KEY, JSON.stringify(trainerPlans))
+    localStorage.setItem(
+      TRAINER_BACKUP_STORAGE_KEY,
+      JSON.stringify({
+        savedAt: new Date().toISOString(),
+        plans: trainerPlans,
+      }),
+    )
   }, [trainerPlans])
 
   useEffect(() => {
@@ -397,6 +448,99 @@ function App() {
           : day,
       ),
     }))
+  }
+
+  function handleMoveExercise(
+    dayId: string,
+    entryId: string,
+    direction: 'up' | 'down',
+  ): void {
+    updateSelectedPlan((plan) => ({
+      ...plan,
+      days: plan.days.map((day) => {
+        if (day.id !== dayId) {
+          return day
+        }
+
+        const sourceIndex = day.exercises.findIndex(
+          (exercise) => exercise.id === entryId,
+        )
+
+        if (sourceIndex < 0) {
+          return day
+        }
+
+        const targetIndex = direction === 'up' ? sourceIndex - 1 : sourceIndex + 1
+        if (targetIndex < 0 || targetIndex >= day.exercises.length) {
+          return day
+        }
+
+        const reordered = [...day.exercises]
+        const [movedExercise] = reordered.splice(sourceIndex, 1)
+        reordered.splice(targetIndex, 0, movedExercise)
+
+        return {
+          ...day,
+          exercises: reordered,
+        }
+      }),
+    }))
+  }
+
+  function handleCustomExerciseFieldChange(
+    field: keyof CustomExerciseDraft,
+    value: string,
+  ): void {
+    setCustomExerciseDraft((current) => ({
+      ...current,
+      [field]: value,
+    }))
+  }
+
+  function handleAddCustomExerciseToTargetDay(): void {
+    if (!targetDayId || !selectedTrainerPlan) {
+      setFeedback('Seleziona prima il giorno di destinazione.')
+      return
+    }
+
+    const customName = customExerciseDraft.name.trim()
+    if (customName.length === 0) {
+      setFeedback('Inserisci il nome dell esercizio personalizzato.')
+      return
+    }
+
+    const muscles = customExerciseDraft.primaryMuscles
+      .split(',')
+      .map((muscle) => muscle.trim().toLowerCase())
+      .filter((muscle) => muscle.length > 0)
+
+    const newEntry: PlanExerciseEntry = {
+      id: createId('entry'),
+      exerciseId: createId('custom-exercise'),
+      name: customName,
+      imageUrl: customExerciseDraft.imageUrl.trim() || GENERIC_FALLBACK_IMAGE,
+      equipment: customExerciseDraft.equipment.trim() || 'Custom',
+      primaryMuscles: muscles,
+      sets: '3',
+      reps: '8-12',
+      rest: '90 sec',
+      notes: customExerciseDraft.notes.trim(),
+    }
+
+    updateSelectedPlan((plan) => ({
+      ...plan,
+      days: plan.days.map((day) =>
+        day.id === targetDayId
+          ? {
+              ...day,
+              exercises: [...day.exercises, newEntry],
+            }
+          : day,
+      ),
+    }))
+
+    setCustomExerciseDraft(INITIAL_CUSTOM_EXERCISE_DRAFT)
+    setFeedback('Esercizio personalizzato aggiunto alla scheda.')
   }
 
   async function handleCopyPlanText(): Promise<void> {
@@ -768,7 +912,7 @@ function App() {
                         </p>
                       ) : (
                         <div className="trainer-exercise-list">
-                          {day.exercises.map((exercise) => (
+                          {day.exercises.map((exercise, exerciseIndex) => (
                             <div key={exercise.id} className="trainer-exercise-row">
                               <img
                                 src={exercise.imageUrl || GENERIC_FALLBACK_IMAGE}
@@ -851,12 +995,32 @@ function App() {
                                 </label>
                               </div>
 
-                              <button
-                                className="btn-danger ghost"
-                                onClick={() => handleRemoveExercise(day.id, exercise.id)}
-                              >
-                                Rimuovi
-                              </button>
+                              <div className="exercise-row-actions">
+                                <button
+                                  className="btn-secondary compact"
+                                  onClick={() =>
+                                    handleMoveExercise(day.id, exercise.id, 'up')
+                                  }
+                                  disabled={exerciseIndex === 0}
+                                >
+                                  Su
+                                </button>
+                                <button
+                                  className="btn-secondary compact"
+                                  onClick={() =>
+                                    handleMoveExercise(day.id, exercise.id, 'down')
+                                  }
+                                  disabled={exerciseIndex === day.exercises.length - 1}
+                                >
+                                  Giu
+                                </button>
+                                <button
+                                  className="btn-danger ghost"
+                                  onClick={() => handleRemoveExercise(day.id, exercise.id)}
+                                >
+                                  Rimuovi
+                                </button>
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -953,6 +1117,83 @@ function App() {
                   'non selezionato'}
               </strong>
             </p>
+
+            <section className="custom-exercise-panel">
+              <h3>Esercizio personalizzato</h3>
+              <p>
+                Se non trovi un movimento in libreria, inseriscilo manualmente e
+                aggiungilo al giorno selezionato.
+              </p>
+
+              <label>
+                Nome esercizio
+                <input
+                  type="text"
+                  value={customExerciseDraft.name}
+                  onChange={(event) =>
+                    handleCustomExerciseFieldChange('name', event.target.value)
+                  }
+                  placeholder="Es. Landmine press"
+                />
+              </label>
+
+              <div className="custom-exercise-grid">
+                <label>
+                  Attrezzatura
+                  <input
+                    type="text"
+                    value={customExerciseDraft.equipment}
+                    onChange={(event) =>
+                      handleCustomExerciseFieldChange('equipment', event.target.value)
+                    }
+                    placeholder="Es. Bilanciere, Elastico"
+                  />
+                </label>
+                <label>
+                  Muscoli (separati da virgola)
+                  <input
+                    type="text"
+                    value={customExerciseDraft.primaryMuscles}
+                    onChange={(event) =>
+                      handleCustomExerciseFieldChange('primaryMuscles', event.target.value)
+                    }
+                    placeholder="Es. petto, spalle, tricipiti"
+                  />
+                </label>
+              </div>
+
+              <label>
+                URL immagine (opzionale)
+                <input
+                  type="url"
+                  value={customExerciseDraft.imageUrl}
+                  onChange={(event) =>
+                    handleCustomExerciseFieldChange('imageUrl', event.target.value)
+                  }
+                  placeholder="https://..."
+                />
+              </label>
+
+              <label>
+                Note iniziali (opzionale)
+                <textarea
+                  rows={2}
+                  value={customExerciseDraft.notes}
+                  onChange={(event) =>
+                    handleCustomExerciseFieldChange('notes', event.target.value)
+                  }
+                  placeholder="Es. ROM ridotto in caso di fastidio"
+                />
+              </label>
+
+              <button
+                className="btn-primary"
+                disabled={!targetDayId || !selectedTrainerPlan}
+                onClick={handleAddCustomExerciseToTargetDay}
+              >
+                Aggiungi Esercizio Personalizzato
+              </button>
+            </section>
 
             <div className="library-grid">
               {visibleExercises.map((exercise) => (

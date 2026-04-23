@@ -16,11 +16,19 @@ Web app React + Vite pensata per personal trainer che vogliono:
    - crei e modifichi le schede manualmente
    - organizzi i giorni
    - aggiungi esercizi da libreria con immagini e dettagli
+   - riordini gli esercizi dentro ogni giorno (su/giu)
+   - aggiungi esercizi personalizzati non presenti in libreria
 
 3. Condivisione senza backend:
    - clic su `Copia Link Pubblico`
    - viene generato un URL unico con le schede codificate
    - invii quel link ai tuoi amici
+
+## Persistenza e sicurezza dati
+
+- Le schede vengono salvate in localStorage nel browser.
+- Viene mantenuto anche un backup locale automatico per ridurre il rischio di perdita dati dopo modifiche dell app.
+- Per ulteriore sicurezza, usa sempre `Copia Link Pubblico` come backup condivisibile.
 
 ## Libreria esercizi
 

@@ -409,6 +409,13 @@
   border: 1px solid rgba(25, 32, 40, 0.14);
 }
 
+.exercise-row-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 86px;
+}
+
 .exercise-edit-fields p {
   margin: 0.28rem 0 0;
   color: var(--ink-soft);
@@ -427,6 +434,37 @@
 .target-info {
   margin: 0.3rem 0 0;
   color: var(--ink-soft);
+}
+
+.custom-exercise-panel {
+  margin-top: 0.7rem;
+  border: 1px dashed rgba(25, 32, 40, 0.25);
+  border-radius: 0.8rem;
+  padding: 0.6rem;
+  background: rgba(255, 255, 255, 0.88);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.custom-exercise-panel h3 {
+  margin: 0;
+  font-size: 0.96rem;
+  text-transform: uppercase;
+  color: var(--ink-strong);
+  font-family: var(--font-title);
+}
+
+.custom-exercise-panel p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.87rem;
+}
+
+.custom-exercise-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.45rem;
 }
 
 .library-filters {
@@ -534,6 +572,11 @@ select:focus {
   background: rgba(25, 32, 40, 0.09);
 }
 
+.btn-secondary.compact {
+  padding: 0.44rem 0.58rem;
+  font-size: 0.84rem;
+}
+
 .btn-danger {
   color: #fff;
   background: linear-gradient(170deg, #df3d3d, #b32727);
@@ -589,10 +632,20 @@ select:focus {
     grid-template-columns: 1fr;
   }
 
+  .custom-exercise-grid {
+    grid-template-columns: 1fr;
+  }
+
   .trainer-exercise-row,
   .library-card,
   .public-exercise {
     grid-template-columns: 1fr;
+  }
+
+  .exercise-row-actions {
+    flex-direction: row;
+    min-width: 0;
+    justify-content: flex-end;
   }
 
   .trainer-exercise-row img,
