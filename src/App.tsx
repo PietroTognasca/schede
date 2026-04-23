@@ -106,6 +106,10 @@ function readSharedPlansTokenFromLocation(): string | null {
   return params.get('plans')
 }
 
+function buildPublicShareLink(encodedPlans: string): string {
+  return `${window.location.origin}${window.location.pathname}?plans=${encodeURIComponent(encodedPlans)}`
+}
+
 function App() {
   const [viewMode, setViewMode] = useState<'public' | 'trainer'>('public')
   const [trainerPlans, setTrainerPlans] = useState<FriendPlan[]>(() =>
@@ -133,9 +137,14 @@ function App() {
   const [customExerciseDraft, setCustomExerciseDraft] =
     useState<CustomExerciseDraft>(INITIAL_CUSTOM_EXERCISE_DRAFT)
 
+  const sharedPlansToken = useMemo(() => readSharedPlansTokenFromLocation(), [])
+
   const sharedPlansFromUrl = useMemo(() => {
-    return decodePlansFromUrl(readSharedPlansTokenFromLocation())
-  }, [])
+    return decodePlansFromUrl(sharedPlansToken)
+  }, [sharedPlansToken])
+
+  const sharedTokenDetected =
+    typeof sharedPlansToken === 'string' && sharedPlansToken.trim().length > 0
 
   const publicPlans = useMemo(() => {
     if (sharedPlansFromUrl && sharedPlansFromUrl.length > 0) {
@@ -578,11 +587,27 @@ function App() {
 
     try {
       const encodedPlans = encodePlansForUrl(trainerPlans)
-      const publicLink = `${window.location.origin}${window.location.pathname}#plans=${encodeURIComponent(encodedPlans)}`
+      const publicLink = buildPublicShareLink(encodedPlans)
       await navigator.clipboard.writeText(publicLink)
       setFeedback('Link pubblico copiato. Invia questo URL ai tuoi amici.')
     } catch {
       setFeedback('Non riesco a copiare il link automaticamente.')
+    }
+  }
+
+  async function handleCopySelectedPlanPublicLink(): Promise<void> {
+    if (!selectedTrainerPlan) {
+      setFeedback('Seleziona una scheda da condividere.')
+      return
+    }
+
+    try {
+      const encodedPlans = encodePlansForUrl([selectedTrainerPlan])
+      const publicLink = buildPublicShareLink(encodedPlans)
+      await navigator.clipboard.writeText(publicLink)
+      setFeedback('Link singola scheda copiato.')
+    } catch {
+      setFeedback('Non riesco a copiare il link della scheda selezionata.')
     }
   }
 
@@ -665,6 +690,13 @@ function App() {
                 ))}
               </ul>
             )}
+
+            {sharedTokenDetected && (!sharedPlansFromUrl || sharedPlansFromUrl.length === 0) ? (
+              <p className="warning-banner">
+                Link condiviso non valido o incompleto. Rigenera il link da
+                Personal Trainer e condividilo senza modificarlo.
+              </p>
+            ) : null}
           </section>
 
           <section className="surface public-detail-panel">
@@ -753,6 +785,13 @@ function App() {
               </button>
               <button className="btn-secondary" onClick={handleCopyPublicLink}>
                 Copia Link Pubblico
+              </button>
+              <button
+                className="btn-secondary"
+                onClick={handleCopySelectedPlanPublicLink}
+                disabled={!selectedTrainerPlan}
+              >
+                Copia Link Scheda Selezionata
               </button>
 
               {sharedPlansFromUrl ? (
