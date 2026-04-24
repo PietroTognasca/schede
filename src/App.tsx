@@ -93,21 +93,35 @@ function toLabel(value: string): string {
 }
 
 function readSharedPlansTokenFromLocation(): string | null {
-  if (window.location.hash.startsWith('#p=')) {
-    const rawHashToken = window.location.hash.slice('#p='.length)
-    try {
-      return decodeURIComponent(rawHashToken)
-    } catch {
-      return rawHashToken
-    }
-  }
+  const normalizedHash = window.location.hash.replace(/^#/, '').trim()
+  if (normalizedHash.length > 0) {
+    const compactHash = normalizedHash.replace(/^\/?\??/, '')
 
-  if (window.location.hash.startsWith('#plans=')) {
-    const rawHashToken = window.location.hash.slice('#plans='.length)
-    try {
-      return decodeURIComponent(rawHashToken)
-    } catch {
-      return rawHashToken
+    if (compactHash.startsWith('p=')) {
+      const rawHashToken = compactHash.slice('p='.length)
+      try {
+        return decodeURIComponent(rawHashToken)
+      } catch {
+        return rawHashToken
+      }
+    }
+
+    if (compactHash.startsWith('plans=')) {
+      const rawHashToken = compactHash.slice('plans='.length)
+      try {
+        return decodeURIComponent(rawHashToken)
+      } catch {
+        return rawHashToken
+      }
+    }
+
+    const hashParams = new URLSearchParams(
+      compactHash.startsWith('?') ? compactHash.slice(1) : compactHash,
+    )
+
+    const tokenFromHashParams = hashParams.get('p') ?? hashParams.get('plans')
+    if (tokenFromHashParams) {
+      return tokenFromHashParams
     }
   }
 
@@ -116,7 +130,7 @@ function readSharedPlansTokenFromLocation(): string | null {
 }
 
 function buildPublicShareLink(encodedPlans: string): string {
-  return `${window.location.origin}${window.location.pathname}?p=${encodedPlans}`
+  return `${window.location.origin}${window.location.pathname}#p=${encodedPlans}`
 }
 
 function App() {
@@ -766,6 +780,11 @@ function App() {
                                     ? ` · ${exercise.primaryMuscles.join(', ')}`
                                     : ''}
                                 </small>
+                                {exercise.notes.trim().length > 0 ? (
+                                  <p className="public-exercise-note">
+                                    Nota: {exercise.notes}
+                                  </p>
+                                ) : null}
                               </div>
                             </div>
                           ))}

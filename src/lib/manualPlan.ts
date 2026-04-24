@@ -526,12 +526,18 @@ export function decodePlansFromUrl(encoded: string | null): FriendPlan[] | null 
   }
 
   const decodedComponent = safeDecodeURIComponent(trimmed)
+  const compactTrimmed = trimmed.replace(/\s+/g, '')
+  const compactDecoded = decodedComponent.replace(/\s+/g, '')
   const candidates = Array.from(
     new Set([
       trimmed,
       trimmed.replace(/ /g, '+'),
+      compactTrimmed,
+      compactTrimmed.replace(/ /g, '+'),
       decodedComponent,
       decodedComponent.replace(/ /g, '+'),
+      compactDecoded,
+      compactDecoded.replace(/ /g, '+'),
     ]),
   )
 
