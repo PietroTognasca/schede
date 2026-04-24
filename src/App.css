@@ -80,6 +80,21 @@
   align-items: start;
 }
 
+.trainer-grid.sidebar-hidden {
+  grid-template-columns: minmax(0, 1fr) minmax(310px, 380px);
+}
+
+.trainer-toolbar {
+  margin-bottom: 0.9rem;
+  padding: 0.9rem 1rem;
+}
+
+.trainer-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 .surface {
   border: 1px solid var(--surface-border);
   border-radius: 1.1rem;
@@ -299,6 +314,7 @@
 }
 
 .sidebar-actions,
+.trainer-toolbar-actions,
 .editor-actions,
 .day-card-actions {
   display: flex;
@@ -590,6 +606,10 @@ select:focus {
 @media (max-width: 1400px) {
   .trainer-grid {
     grid-template-columns: minmax(250px, 290px) minmax(0, 1fr);
+  }
+
+  .trainer-grid.sidebar-hidden {
+    grid-template-columns: 1fr;
   }
 
   .trainer-library {

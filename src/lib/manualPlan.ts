@@ -53,7 +53,7 @@ interface SharedExerciseV2 {
 }
 
 interface SharedDayV2 {
-  t: string
+  t?: string
   f?: string
   n?: string
   x: SharedExerciseV2[]
@@ -311,18 +311,49 @@ function toSharedExerciseV2(exercise: PlanExerciseEntry): SharedExerciseV2 {
 }
 
 function toSharedPlanV2(plan: FriendPlan): SharedPlanV2 {
-  return {
+  const sharedPlan: SharedPlanV2 = {
     n: plan.friendName.trim(),
-    o: plan.objective.trim(),
-    d: plan.duration.trim(),
-    c: plan.coachNotes.trim(),
-    y: plan.days.map((day) => ({
-      t: day.title,
-      f: day.focus,
-      n: day.notes,
-      x: day.exercises.map(toSharedExerciseV2),
-    })),
+    y: plan.days.map((day, index) => {
+      const sharedDay: SharedDayV2 = {
+        x: day.exercises.map(toSharedExerciseV2),
+      }
+
+      const normalizedTitle = day.title.trim()
+      const defaultTitle = `Giorno ${index + 1}`
+      if (normalizedTitle.length > 0 && normalizedTitle !== defaultTitle) {
+        sharedDay.t = normalizedTitle
+      }
+
+      const normalizedFocus = day.focus.trim()
+      if (normalizedFocus.length > 0) {
+        sharedDay.f = normalizedFocus
+      }
+
+      const normalizedNotes = day.notes.trim()
+      if (normalizedNotes.length > 0) {
+        sharedDay.n = normalizedNotes
+      }
+
+      return sharedDay
+    }),
   }
+
+  const normalizedObjective = plan.objective.trim()
+  if (normalizedObjective.length > 0 && normalizedObjective !== DEFAULT_OBJECTIVE) {
+    sharedPlan.o = normalizedObjective
+  }
+
+  const normalizedDuration = plan.duration.trim()
+  if (normalizedDuration.length > 0 && normalizedDuration !== '4 settimane') {
+    sharedPlan.d = normalizedDuration
+  }
+
+  const normalizedCoachNotes = plan.coachNotes.trim()
+  if (normalizedCoachNotes.length > 0) {
+    sharedPlan.c = normalizedCoachNotes
+  }
+
+  return sharedPlan
 }
 
 function fromSharedExerciseV2(value: unknown): PlanExerciseEntry | null {

@@ -132,6 +132,7 @@ function App() {
   )
   const [targetDayId, setTargetDayId] = useState<string | null>(null)
   const [trainerFeedback, setTrainerFeedback] = useState('')
+  const [isTrainerSidebarVisible, setIsTrainerSidebarVisible] = useState(true)
 
   const [exerciseLibrary, setExerciseLibrary] = useState<ExerciseLibraryItem[]>(
     FALLBACK_EXERCISES,
@@ -786,9 +787,9 @@ function App() {
           </section>
         </main>
       ) : (
-        <main className="trainer-grid">
-          <aside className="surface trainer-sidebar">
-            <div className="sidebar-actions">
+        <>
+          <section className="surface trainer-toolbar">
+            <div className="trainer-toolbar-actions">
               <button className="btn-primary" onClick={handleCreatePlan}>
                 Nuova Scheda
               </button>
@@ -808,37 +809,51 @@ function App() {
                   Importa Schede Dal Link
                 </button>
               ) : null}
+
+              <button
+                className="btn-secondary"
+                onClick={() => setIsTrainerSidebarVisible((current) => !current)}
+              >
+                {isTrainerSidebarVisible
+                  ? 'Nascondi Elenco Schede'
+                  : 'Mostra Elenco Schede'}
+              </button>
             </div>
 
             {trainerFeedback ? <p className="feedback-banner">{trainerFeedback}</p> : null}
+          </section>
 
-            <div className="panel-header">
-              <h2>Le Tue Schede</h2>
-              <span>{trainerPlans.length}</span>
-            </div>
+          <main className={`trainer-grid${isTrainerSidebarVisible ? '' : ' sidebar-hidden'}`}>
+            {isTrainerSidebarVisible ? (
+              <aside className="surface trainer-sidebar">
+                <div className="panel-header">
+                  <h2>Le Tue Schede</h2>
+                  <span>{trainerPlans.length}</span>
+                </div>
 
-            {trainerPlans.length === 0 ? (
-              <p className="empty-message">
-                Ancora nessuna scheda. Premi Nuova Scheda per iniziare.
-              </p>
-            ) : (
-              <ul className="trainer-plan-list">
-                {trainerPlans.map((plan) => (
-                  <li key={plan.id}>
-                    <button
-                      type="button"
-                      className={plan.id === selectedTrainerPlanId ? 'active' : ''}
-                      onClick={() => setSelectedTrainerPlanId(plan.id)}
-                    >
-                      <strong>{plan.friendName}</strong>
-                      <span>{plan.objective}</span>
-                      <small>{formatDateLabel(plan.updatedAt)}</small>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </aside>
+                {trainerPlans.length === 0 ? (
+                  <p className="empty-message">
+                    Ancora nessuna scheda. Premi Nuova Scheda per iniziare.
+                  </p>
+                ) : (
+                  <ul className="trainer-plan-list">
+                    {trainerPlans.map((plan) => (
+                      <li key={plan.id}>
+                        <button
+                          type="button"
+                          className={plan.id === selectedTrainerPlanId ? 'active' : ''}
+                          onClick={() => setSelectedTrainerPlanId(plan.id)}
+                        >
+                          <strong>{plan.friendName}</strong>
+                          <span>{plan.objective}</span>
+                          <small>{formatDateLabel(plan.updatedAt)}</small>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </aside>
+            ) : null}
 
           <section className="surface trainer-editor">
             {selectedTrainerPlan ? (
@@ -1094,7 +1109,7 @@ function App() {
             ) : (
               <div className="empty-message-block">
                 <h2>Nessuna scheda selezionata</h2>
-                <p>Crea o seleziona una scheda dalla colonna sinistra.</p>
+                <p>Crea o seleziona una scheda dal pannello elenco.</p>
               </div>
             )}
           </section>
@@ -1288,7 +1303,8 @@ function App() {
               ))}
             </div>
           </aside>
-        </main>
+          </main>
+        </>
       )}
     </div>
   )
